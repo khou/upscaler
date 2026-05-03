@@ -1,0 +1,6 @@
+build/
+Resources/engine/upscayl-bin
+Resources/engine/models/
+*.dmg
+*.zip
+.DS_Store
