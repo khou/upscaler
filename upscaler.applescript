@@ -19,11 +19,12 @@ on open dropped_items
         return
     end if
 
-    -- Ask scale
+    -- Ask scale (2x default keeps older Macs responsive; 4x is much heavier)
     set n to count of image_files
     set scale_choice to button returned of (display dialog ¬
-        "Upscale " & n & " image" & my plural(n) & " by:" ¬
-        buttons {"2x", "3x", "4x"} default button "4x" with title "Upscaler")
+        "Upscale " & n & " image" & my plural(n) & " by:" & return & return & ¬
+        "2x is fast on most Macs. 4x looks great but can take several minutes per image and may slow your computer down while it runs." ¬
+        buttons {"2x", "3x", "4x"} default button "2x" with title "Upscaler")
     set scale to text 1 of scale_choice
 
     -- Ask output folder
@@ -38,24 +39,42 @@ on open dropped_items
     -- Process each file
     set total to count of image_files
     set failures to {}
+
+    -- Show progress in the Dock + script menu (works on macOS 10.10+)
+    set progress total steps to total
+    set progress completed steps to 0
+    set progress description to "Upscaling " & total & " image" & my plural(total) & "..."
+    set progress additional description to "This can take several minutes per image."
+
     repeat with i from 1 to total
         set src to item i of image_files
+        set progress completed steps to (i - 1)
+        set progress additional description to "Image " & i & " of " & total & ": " & my basename(src)
         try
             set base to do shell script "f=" & quoted form of src & "; b=$(basename \"$f\"); echo \"${b%.*}\""
             set dest to output_path & base & "_x" & scale & ".png"
-            do shell script ¬
-                quoted form of engine & ¬
-                " -i " & quoted form of src & ¬
-                " -o " & quoted form of dest & ¬
-                " -s " & scale & ¬
-                " -n realesrgan-x4plus" & ¬
-                " -m " & quoted form of models & ¬
-                " -f png" & ¬
-                " 2>&1"
+            -- Default `do shell script` timeout is 2 minutes; large images on
+            -- weak GPUs need much longer. Cap at 1 hour per image.
+            -- nice + -j 1:1:1 + smaller tiles keeps the rest of the system responsive.
+            with timeout of 3600 seconds
+                do shell script ¬
+                    "nice -n 19 " & ¬
+                    quoted form of engine & ¬
+                    " -i " & quoted form of src & ¬
+                    " -o " & quoted form of dest & ¬
+                    " -s " & scale & ¬
+                    " -n realesrgan-x4plus" & ¬
+                    " -m " & quoted form of models & ¬
+                    " -t 100" & ¬
+                    " -j 1:1:1" & ¬
+                    " -f png" & ¬
+                    " 2>&1"
+            end timeout
         on error errMsg
-            set end of failures to (src & ": " & errMsg)
+            set end of failures to (my basename(src) & ": " & errMsg)
         end try
     end repeat
+    set progress completed steps to total
 
     if (count of failures) is 0 then
         display notification "Upscaled " & total & " image" & my plural(total) & ¬
@@ -97,3 +116,10 @@ on plural(n)
         return "s"
     end if
 end plural
+
+on basename(p)
+    set AppleScript's text item delimiters to "/"
+    set parts to text items of p
+    set AppleScript's text item delimiters to ""
+    return last item of parts
+end basename
