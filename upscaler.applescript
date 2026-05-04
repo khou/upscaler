@@ -22,8 +22,8 @@ on run
     try
         set choice to button returned of (display dialog ¬
             "What do you want to upscale?" & return & return & ¬
-            "(You can also drag images or a folder directly onto the app icon.)" ¬
-            buttons {"Cancel", "Folder", "Images"} default button "Images" ¬
+            "(You can also drag a file or folder directly onto the app icon.)" ¬
+            buttons {"Cancel", "Folder", "Image"} default button "Image" ¬
             cancel button "Cancel" with title "Upscaler")
     on error number -128
         return
@@ -106,7 +106,7 @@ on processItems(items_list)
                         " 2>&1"
                 end timeout
             on error errMsg
-                copy (my basename(src) & ": " & errMsg) to end of failures
+                set failures to failures & {(my basename(src) & ": " & errMsg)}
             end try
         end repeat
 
@@ -139,7 +139,10 @@ end processItems
 
 -- Recursively collect image POSIX paths from a list of files and folders
 on collectImages(items_list)
-    set result to {}
+    -- NOTE: do not name this variable `result` -- that's a reserved
+    -- AppleScript identifier auto-bound to the previous statement's
+    -- return value, which silently clobbers your local across iterations.
+    set images to {}
     repeat with itm in items_list
         set p to POSIX path of (contents of itm)
         set isDir to false
@@ -156,22 +159,21 @@ on collectImages(items_list)
                     " \\) | LC_ALL=C sort"
             end try
             if found is not "" then
-                -- `paragraphs of` splits on CR, LF, or CRLF. `do shell script`
-                -- returns CR-separated text on macOS, so plain text-item
-                -- splitting with `linefeed` does NOT work.
+                -- `paragraphs of` splits on CR, LF, or CRLF (do shell script
+                -- returns CR-separated text on macOS).
                 repeat with f in (paragraphs of found)
                     set fStr to (f as text)
-                    if fStr is not "" then copy fStr to end of result
+                    if fStr is not "" then set images to images & {fStr}
                 end repeat
             end if
         else
             set ext to my lower(my file_ext(p))
             if ext is in {"png", "jpg", "jpeg", "webp"} then
-                copy p to end of result
+                set images to images & {p}
             end if
         end if
     end repeat
-    return result
+    return images
 end collectImages
 
 -- Real progress window via AppleScriptObjC
