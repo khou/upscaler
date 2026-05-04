@@ -106,7 +106,7 @@ on processItems(items_list)
                         " 2>&1"
                 end timeout
             on error errMsg
-                set end of failures to (my basename(src) & ": " & errMsg)
+                copy (my basename(src) & ": " & errMsg) to end of failures
             end try
         end repeat
 
@@ -156,19 +156,18 @@ on collectImages(items_list)
                     " \\) | LC_ALL=C sort"
             end try
             if found is not "" then
-                set savedDelims to AppleScript's text item delimiters
-                set AppleScript's text item delimiters to linefeed
-                set found_list to text items of found
-                set AppleScript's text item delimiters to savedDelims
-                repeat with f in found_list
-                    set fStr to (f as string)
-                    if fStr is not "" then set end of result to fStr
+                -- `paragraphs of` splits on CR, LF, or CRLF. `do shell script`
+                -- returns CR-separated text on macOS, so plain text-item
+                -- splitting with `linefeed` does NOT work.
+                repeat with f in (paragraphs of found)
+                    set fStr to (f as text)
+                    if fStr is not "" then copy fStr to end of result
                 end repeat
             end if
         else
             set ext to my lower(my file_ext(p))
             if ext is in {"png", "jpg", "jpeg", "webp"} then
-                set end of result to p
+                copy p to end of result
             end if
         end if
     end repeat
