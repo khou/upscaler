@@ -1,61 +1,60 @@
 -- Upscaler.app
--- Drop image files on the icon (or onto the app in Finder/Dock).
--- Choose a scale factor and an output folder. Each image is upscaled and
--- saved as <name>_x<scale>.png in the chosen folder.
+-- Drop a single image, multiple images, or whole folders onto the icon.
+-- Folders are walked recursively for .png / .jpg / .jpeg / .webp files.
+-- A real progress window shows current image and overall progress.
+
+use AppleScript version "2.4"
+use framework "Foundation"
+use framework "AppKit"
+use scripting additions
+
+global progressWin
+global progressBar
+global progressLabel
+global statusLabel
 
 on open dropped_items
-    -- Filter to image files only
-    set image_files to {}
-    repeat with itm in dropped_items
-        set p to POSIX path of itm
-        set ext to my lower(my file_ext(p))
-        if ext is in {"png", "jpg", "jpeg", "webp"} then
-            set end of image_files to p
-        end if
-    end repeat
+    -- Expand: collect all image files (recursing into any folders)
+    set image_files to my collectImages(dropped_items)
+    set total to count of image_files
 
-    if (count of image_files) is 0 then
-        display dialog "No supported images found. Drop PNG, JPEG, or WebP files." buttons {"OK"} default button "OK" with icon caution
+    if total is 0 then
+        display dialog "No PNG, JPEG, or WebP images found in your selection." ¬
+            buttons {"OK"} default button "OK" with icon caution with title "Upscaler"
         return
     end if
 
-    -- Ask scale (2x default keeps older Macs responsive; 4x is much heavier)
-    set n to count of image_files
+    -- Ask scale (3x default)
     set scale_choice to button returned of (display dialog ¬
-        "Upscale " & n & " image" & my plural(n) & " by:" & return & return & ¬
-        "2x is fast on most Macs. 4x looks great but can take several minutes per image and may slow your computer down while it runs." ¬
-        buttons {"2x", "3x", "4x"} default button "2x" with title "Upscaler")
+        "Found " & total & " image" & my plural(total) & ". Upscale by:" & return & return & ¬
+        "2x is fastest. 4x looks great but is much slower, especially on older Macs." ¬
+        buttons {"2x", "3x", "4x"} default button "3x" with title "Upscaler")
     set scale to text 1 of scale_choice
 
     -- Ask output folder
-    set output_folder to choose folder with prompt "Choose a folder to save the upscaled images."
+    set output_folder to choose folder with prompt "Choose where to save the upscaled images."
     set output_path to POSIX path of output_folder
 
-    -- Locate bundled engine
+    -- Locate engine
     set bundle_path to POSIX path of (path to me)
     set engine to bundle_path & "Contents/Resources/engine/upscayl-bin"
     set models to bundle_path & "Contents/Resources/engine/models"
 
-    -- Process each file
-    set total to count of image_files
+    -- Show real progress window (AppKit)
+    my showProgressWindow(total)
+
+    -- Process each image serially. nice + -t 100 + -j 1:1:1 keep the
+    -- system responsive on weaker Macs.
     set failures to {}
-
-    -- Show progress in the Dock + script menu (works on macOS 10.10+)
-    set progress total steps to total
-    set progress completed steps to 0
-    set progress description to "Upscaling " & total & " image" & my plural(total) & "..."
-    set progress additional description to "This can take several minutes per image."
-
     repeat with i from 1 to total
         set src to item i of image_files
-        set progress completed steps to (i - 1)
-        set progress additional description to "Image " & i & " of " & total & ": " & my basename(src)
+        my updateProgress(i - 1, ¬
+            "Image " & i & " of " & total & " (" & scale & "x)", ¬
+            my basename(src))
+
         try
-            set base to do shell script "f=" & quoted form of src & "; b=$(basename \"$f\"); echo \"${b%.*}\""
-            set dest to output_path & base & "_x" & scale & ".png"
-            -- Default `do shell script` timeout is 2 minutes; large images on
-            -- weak GPUs need much longer. Cap at 1 hour per image.
-            -- nice + -j 1:1:1 + smaller tiles keeps the rest of the system responsive.
+            set base to my stripExt(my basename(src))
+            set dest to my uniqueDest(output_path, base, scale)
             with timeout of 3600 seconds
                 do shell script ¬
                     "nice -n 19 " & ¬
@@ -74,27 +73,149 @@ on open dropped_items
             set end of failures to (my basename(src) & ": " & errMsg)
         end try
     end repeat
-    set progress completed steps to total
+
+    my updateProgress(total, "Done", "")
+    delay 0.4
+    my closeProgressWindow()
 
     if (count of failures) is 0 then
         display notification "Upscaled " & total & " image" & my plural(total) & ¬
-            " to " & output_path ¬
-            with title "Upscaler" sound name "Glass"
+            " to " & output_path with title "Upscaler" sound name "Glass"
     else
-        set msg to "Done with " & ((total - (count of failures)) as string) & ¬
-            " of " & total & " images.\n\nFailures:\n"
+        set msg to "Done. " & ((total - (count of failures)) as string) & ¬
+            " of " & total & " succeeded." & return & return & "Failures:" & return
         repeat with f in failures
-            set msg to msg & f & "\n"
+            set msg to msg & f & return
         end repeat
-        display dialog msg buttons {"OK"} default button "OK" with icon caution
+        display dialog msg buttons {"OK"} default button "OK" ¬
+            with icon caution with title "Upscaler"
     end if
 end open
 
--- Allow launching by double-click (no files dropped) -> picker
+-- Double-click launch -> ask whether to pick files or a folder
 on run
-    set picked to choose file with prompt "Choose images to upscale" of type {"png", "jpg", "jpeg", "webp"} with multiple selections allowed
-    open picked
+    set choice to button returned of (display dialog ¬
+        "What do you want to upscale?" & return & return & ¬
+        "(You can also drag images or a folder directly onto the app icon.)" ¬
+        buttons {"Cancel", "Folder", "Images"} default button "Images" ¬
+        cancel button "Cancel" with title "Upscaler")
+    if choice is "Folder" then
+        set folder_choice to choose folder with prompt ¬
+            "Choose a folder. All images inside (and in subfolders) will be upscaled."
+        open {folder_choice}
+    else
+        set picked to choose file with prompt "Choose images to upscale." ¬
+            of type {"public.image"} with multiple selections allowed
+        open picked
+    end if
 end run
+
+-- Recursively collect image POSIX paths from a list of files and folders
+on collectImages(items_list)
+    set result to {}
+    repeat with itm in items_list
+        set p to POSIX path of itm
+        try
+            set isDir to (do shell script ¬
+                "if [ -d " & quoted form of p & " ]; then echo y; else echo n; fi")
+        on error
+            set isDir to "n"
+        end try
+        if isDir is "y" then
+            try
+                set found to do shell script ¬
+                    "find " & quoted form of p & " -type f \\( " & ¬
+                    "-iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp'" & ¬
+                    " \\) | sort"
+                set AppleScript's text item delimiters to linefeed
+                set found_list to text items of found
+                set AppleScript's text item delimiters to ""
+                repeat with f in found_list
+                    set fStr to f as string
+                    if fStr is not "" then set end of result to fStr
+                end repeat
+            end try
+        else
+            set ext to my lower(my file_ext(p))
+            if ext is in {"png", "jpg", "jpeg", "webp"} then
+                set end of result to p
+            end if
+        end if
+    end repeat
+    return result
+end collectImages
+
+-- Real progress window via AppleScriptObjC
+on showProgressWindow(total)
+    set rect to current application's NSMakeRect(0, 0, 480, 130)
+    set styleMask to (current application's NSWindowStyleMaskTitled)
+    set progressWin to current application's NSWindow's alloc()'s ¬
+        initWithContentRect:rect styleMask:styleMask ¬
+        backing:(current application's NSBackingStoreBuffered) defer:false
+    progressWin's setTitle:"Upscaler"
+    progressWin's |center|()
+    progressWin's setLevel:(current application's NSFloatingWindowLevel)
+
+    set progressLabel to current application's NSTextField's alloc()'s ¬
+        initWithFrame:(current application's NSMakeRect(20, 85, 440, 22))
+    progressLabel's setStringValue:"Starting..."
+    progressLabel's setBezeled:false
+    progressLabel's setEditable:false
+    progressLabel's setSelectable:false
+    progressLabel's setBackgroundColor:(current application's NSColor's clearColor)
+    progressLabel's setFont:(current application's NSFont's systemFontOfSize:13)
+    (progressWin's contentView())'s addSubview:progressLabel
+
+    set statusLabel to current application's NSTextField's alloc()'s ¬
+        initWithFrame:(current application's NSMakeRect(20, 60, 440, 20))
+    statusLabel's setStringValue:""
+    statusLabel's setBezeled:false
+    statusLabel's setEditable:false
+    statusLabel's setSelectable:false
+    statusLabel's setBackgroundColor:(current application's NSColor's clearColor)
+    statusLabel's setFont:(current application's NSFont's systemFontOfSize:11)
+    statusLabel's setTextColor:(current application's NSColor's secondaryLabelColor)
+    (progressWin's contentView())'s addSubview:statusLabel
+
+    set progressBar to current application's NSProgressIndicator's alloc()'s ¬
+        initWithFrame:(current application's NSMakeRect(20, 25, 440, 20))
+    progressBar's setIndeterminate:false
+    progressBar's setMinValue:0
+    progressBar's setMaxValue:total
+    progressBar's setDoubleValue:0
+    (progressWin's contentView())'s addSubview:progressBar
+
+    progressWin's makeKeyAndOrderFront:(missing value)
+    current application's NSApp's activateIgnoringOtherApps:true
+
+    -- Dock badge progress as backup
+    set progress total steps to total
+    set progress completed steps to 0
+    set progress description to "Upscaling " & total & " image" & my plural(total) & "..."
+end showProgressWindow
+
+on updateProgress(step, mainText, subText)
+    if progressBar is not missing value then
+        progressBar's setDoubleValue:step
+        progressLabel's setStringValue:mainText
+        statusLabel's setStringValue:subText
+        -- Pump the run loop briefly so the window repaints between images
+        current application's NSRunLoop's mainRunLoop()'s ¬
+            runUntilDate:(current application's NSDate's dateWithTimeIntervalSinceNow:0.02)
+    end if
+    set progress completed steps to step
+    set progress additional description to mainText
+end updateProgress
+
+on closeProgressWindow()
+    if progressWin is not missing value then
+        progressWin's orderOut:(missing value)
+        set progressWin to missing value
+        set progressBar to missing value
+        set progressLabel to missing value
+        set statusLabel to missing value
+    end if
+end closeProgressWindow
 
 -- Helpers
 on file_ext(p)
@@ -105,21 +226,43 @@ on file_ext(p)
     return last item of parts
 end file_ext
 
-on lower(s)
-    return do shell script "printf '%s' " & quoted form of s & " | tr '[:upper:]' '[:lower:]'"
-end lower
-
-on plural(n)
-    if n is 1 then
-        return ""
-    else
-        return "s"
-    end if
-end plural
-
 on basename(p)
     set AppleScript's text item delimiters to "/"
     set parts to text items of p
     set AppleScript's text item delimiters to ""
     return last item of parts
 end basename
+
+on stripExt(name)
+    set AppleScript's text item delimiters to "."
+    set parts to text items of name
+    set AppleScript's text item delimiters to ""
+    if (count of parts) < 2 then return name
+    set base to ""
+    repeat with i from 1 to (count of parts) - 1
+        if i > 1 then set base to base & "."
+        set base to base & item i of parts
+    end repeat
+    return base
+end stripExt
+
+on lower(s)
+    return do shell script "printf '%s' " & quoted form of s & " | tr '[:upper:]' '[:lower:]'"
+end lower
+
+on plural(n)
+    if n is 1 then return ""
+    return "s"
+end plural
+
+on uniqueDest(folder_path, base, scale)
+    set candidate to folder_path & base & "_x" & scale & ".png"
+    set i to 2
+    repeat while (do shell script ¬
+        "if [ -e " & quoted form of candidate & " ]; then echo y; else echo n; fi") is "y"
+        set candidate to folder_path & base & "_x" & scale & "_" & i & ".png"
+        set i to i + 1
+        if i > 999 then exit repeat
+    end repeat
+    return candidate
+end uniqueDest

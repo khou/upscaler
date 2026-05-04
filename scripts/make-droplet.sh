@@ -34,14 +34,15 @@ PLIST="$APP_DIR/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :LSApplicationCategoryType string public.app-category.graphics-design" "$PLIST" 2>/dev/null || true
 
-# Declare we accept image drops so the icon highlights when dragging
+# Declare we accept image and folder drops so the icon highlights when dragging
 /usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes array" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0 dict" "$PLIST"
-/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string Image" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string Image or Folder" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Viewer" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string public.image" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string public.folder" "$PLIST"
 
 echo "==> Ad-hoc signing (so Gatekeeper allows the bundled binary on first run)"
 codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
