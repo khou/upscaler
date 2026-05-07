@@ -13,6 +13,13 @@ property progressBar : missing value
 property progressLabel : missing value
 property statusLabel : missing value
 
+-- Auto-scale picks the smallest scale in {2,3,4} that still produces an
+-- output big enough for KDP print at 300 DPI on 8.5x11" (2550x3300 px).
+-- For inputs too small to ever reach that target, we fall back to 4x
+-- (the max). Adjust these for other trim sizes / DPI.
+property auto_target_short : 2550 -- 8.5" * 300 DPI
+property auto_target_long : 3300 -- 11"  * 300 DPI
+
 on open dropped_items
     my processItems(dropped_items)
 end open
@@ -60,12 +67,23 @@ on processItems(items_list)
             return
         end if
 
-        -- Ask scale (3x default)
-        set scale_choice to button returned of (display dialog ¬
-            "Found " & total & " image" & my plural(total) & ". Upscale by:" & return & return & ¬
-            "2x is fastest. 4x looks great but is much slower, especially on older Macs." ¬
-            buttons {"2x", "3x", "4x"} default button "3x" with title "Upscaler")
-        set scale to text 1 of scale_choice
+        -- Ask scale: Auto (per-image, smallest scale that hits KDP 8.5x11
+        -- at 300 DPI; falls back to 4x). Manual 2x/3x/4x stay as escape
+        -- hatches.
+        set auto_label to "Auto (KDP 8.5x11 at 300 DPI)"
+        set scale_pick to choose from list ¬
+            {auto_label, "2x", "3x", "4x"} ¬
+            with prompt ("Found " & total & " image" & my plural(total) & ". Upscale by:") ¬
+            default items {auto_label} ¬
+            with title "Upscaler"
+        if scale_pick is false then return -- user cancelled
+        set scale_pref to item 1 of scale_pick
+        set is_auto to (scale_pref is auto_label)
+        if is_auto then
+            set fixed_scale to "" -- unused in auto mode
+        else
+            set fixed_scale to text 1 of scale_pref
+        end if
 
         -- Ask output folder
         set output_folder to choose folder with prompt "Choose where to save the upscaled images."
@@ -84,6 +102,12 @@ on processItems(items_list)
         set failures to {}
         repeat with i from 1 to total
             set src to item i of image_files
+            if is_auto then
+                set dims to my imageDimensions(src)
+                set scale to my chooseScale(item 1 of dims, item 2 of dims)
+            else
+                set scale to fixed_scale
+            end if
             my updateProgress(i - 1, ¬
                 "Image " & i & " of " & total & " (" & scale & "x)", ¬
                 my basename(src))
@@ -285,6 +309,41 @@ on plural(n)
     if n is 1 then return ""
     return "s"
 end plural
+
+on imageDimensions(p)
+    -- Returns {width, height} as integers, or {0, 0} on failure.
+    try
+        set raw to do shell script "sips -g pixelWidth -g pixelHeight " & quoted form of p & ¬
+            " | awk '/pixelWidth:/ {w=$2} /pixelHeight:/ {h=$2} END {print w \" \" h}'"
+        set saved_delims to AppleScript's text item delimiters
+        set AppleScript's text item delimiters to " "
+        set parts to text items of raw
+        set AppleScript's text item delimiters to saved_delims
+        if (count of parts) < 2 then return {0, 0}
+        return {(item 1 of parts) as integer, (item 2 of parts) as integer}
+    on error
+        return {0, 0}
+    end try
+end imageDimensions
+
+on chooseScale(w, h)
+    -- Smallest scale in {2,3,4} where output meets the KDP target on both
+    -- axes. Falls back to "4" if input dims are unknown or the target is
+    -- unreachable even at 4x.
+    if w is 0 or h is 0 then return "4"
+    set short_in to w
+    set long_in to h
+    if h < w then
+        set short_in to h
+        set long_in to w
+    end if
+    repeat with s from 2 to 4
+        if (short_in * s) >= auto_target_short and (long_in * s) >= auto_target_long then
+            return (s as text)
+        end if
+    end repeat
+    return "4"
+end chooseScale
 
 on uniqueDest(folder_path, base, scale)
     set candidate to folder_path & base & "_x" & scale & ".png"

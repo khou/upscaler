@@ -1,7 +1,10 @@
 # Upscaler
 
 A drag-and-drop image upscaler for macOS. Drop PNG/JPEG/WebP images on the app
-icon, pick 2x/3x/4x, and get higher-resolution copies powered by Real-ESRGAN.
+icon and get higher-resolution copies powered by Real-ESRGAN. By default it
+auto-picks the upscale factor per image (2x/3x/4x) so the output is big enough
+for KDP print at 300 DPI on 8.5x11" (2550x3300 px), falling back to 4x if the
+input is too small to reach that. You can also force a fixed factor.
 
 No subscription, no telemetry, no internet connection required after install.
 
@@ -15,9 +18,10 @@ No subscription, no telemetry, no internet connection required after install.
 ## Use
 
 - Drag images onto the app icon, or double-click the app and pick files.
-- Choose a scale factor.
+- Pick **Auto** (default, targets KDP 8.5x11 at 300 DPI) or a fixed 2x/3x/4x.
 - Choose where to save the output.
-- Wait. Each image is saved as `<name>_x<scale>.png`.
+- Wait. Each image is saved as `<name>_x<scale>.png`. In Auto mode the scale
+  in the filename reflects what was actually chosen for that image.
 
 ## Build from source
 
